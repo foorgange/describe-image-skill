@@ -195,6 +195,10 @@ On first load, the skill also tries to write a "route images through describe-im
 
 首次加载时技能也会尝试自行在你的宿主环境记忆文件写入一条"图片先走 describe-image 转述"的提醒（幂等）。但 opencode 的 observer 子智能体默认行为会绕过它，所以上面那句主动声明才是 opencode 下可靠的做法。
 
+> **自动写入**: 从 v1.x 起，`describe_image.py` 每次运行都会**自动检测 opencode 环境**（存在 `~/.config/opencode/`），并把上面的路由条目**幂等**写入 `~/.config/opencode/AGENTS.md`（已存在则跳过，不重复追加；文件/目录不存在会自动创建）。也就是说，只要你在 opencode 里跑过一次 `python describe_image.py ...`，规则就已经写进 AGENTS.md 了——上面的"首次主动声明"从此变成兜底手段，而非必需步骤。Claude Code 环境检测不到 `~/.config/opencode/`，不会误写。
+>
+> **Auto-write**: since v1.x, every run of `describe_image.py` **auto-detects opencode** (checks for `~/.config/opencode/`) and **idempotently** appends the routing entry above to `~/.config/opencode/AGENTS.md` (skips if already present, never duplicates; creates file/dir if absent). So once you run `python describe_image.py ...` inside opencode, the rule is already in AGENTS.md — the manual "first-use statement" above becomes a fallback, not a requirement. In Claude Code the `~/.config/opencode/` dir does not exist, so nothing is written.
+
 ### How the skill triggers / 技能如何触发
 
 本技能通过 `SKILL.md` 让宿主模型知道什么时候调用它。

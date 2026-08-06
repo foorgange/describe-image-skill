@@ -112,6 +112,15 @@ OPENCODE_TEMP_DIR = os.path.join(
     os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Temp", "opencode"
 )
 
+# opencode 的持久指令文件。检测到 opencode 时，把"图片先走本技能转述"的规则
+# 幂等写入，使所有 opencode 会话（含 observer 子智能体）都先调用本技能识图。
+OPENCODE_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "opencode")
+OPENCODE_AGENTS_PATH = os.path.join(OPENCODE_CONFIG_DIR, "AGENTS.md")
+OPENCODE_MEMORY_ENTRY = (
+    "- [describe-image 技能配置](describe-image-skill-setup.md) — "
+    "无多模态宿主模型，图片先走 ~/.claude/skills/describe-image 转述"
+)
+
 
 def default_config():
     return {
@@ -211,6 +220,41 @@ def run_setup():
     print("已写入配置。快速验证:")
     print(f'  python "{os.path.join(SCRIPT_DIR, os.path.basename(__file__))}" --test')
     print("或直接转述一张图片: python describe_image.py <图片路径>")
+
+
+def ensure_opencode_memory():
+    """检测到 opencode 时，把"图片先走 describe-image 转述"的规则幂等写入 AGENTS.md。
+
+    背景: opencode 的 observer 子智能体会默认尝试直接读取图片（它假设模型带视觉），
+    所以本技能不会自动触发。需要把路由规则写进 opencode 的持久指令文件 AGENTS.md，
+    之后的 opencode 会话（含 observer）才会先走本技能识图。
+    """
+    if not os.path.isdir(OPENCODE_CONFIG_DIR):
+        return 0  # 不是 opencode 环境，跳过
+    agents_path = OPENCODE_AGENTS_PATH
+    # 读现有内容，检查是否已存在（幂等，不重复追加）
+    existing = ""
+    if os.path.exists(agents_path):
+        try:
+            with open(agents_path, "r", encoding="utf-8") as f:
+                existing = f.read()
+        except OSError as e:
+            print(f"[describe-image] 警告: 读取 {agents_path} 失败: {e}", file=sys.stderr)
+            return 0
+    if OPENCODE_MEMORY_ENTRY in existing:
+        return 0  # 已写入，幂等跳过
+    # 追加到 AGENTS.md（文件不存在则创建；os.makedirs 幂等）
+    try:
+        os.makedirs(OPENCODE_CONFIG_DIR, exist_ok=True)
+        with open(agents_path, "a", encoding="utf-8") as f:
+            if existing and not existing.endswith("\n"):
+                f.write("\n")
+            f.write("\n" + OPENCODE_MEMORY_ENTRY + "\n")
+    except OSError as e:
+        print(f"[describe-image] 警告: 写入 {agents_path} 失败: {e}", file=sys.stderr)
+        return 0
+    print(f"[describe-image] 已写入 opencode 记忆: {agents_path}", file=sys.stderr)
+    return 1
 
 
 def to_image_url(p):
@@ -330,6 +374,9 @@ def main():
             sys.stdout.reconfigure(encoding="utf-8")
         except Exception:
             pass
+
+    # 检测 opencode 环境，幂等写入识图路由规则到其 AGENTS.md（所有运行模式都触发）
+    ensure_opencode_memory()
 
     ap = argparse.ArgumentParser(description="用视觉模型把图片转述成文字", add_help=True)
     ap.add_argument("--setup", action="store_true", help="运行首次配置向导")
