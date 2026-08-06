@@ -342,6 +342,16 @@ def main():
         print(json.dumps(shown, ensure_ascii=False, indent=2))
         return
 
+    # 配置校验（--test 与正常转述共用）
+    if not cfg.get("api_key") and not cfg.get("base_url", "").lower().startswith("http://localhost"):
+        print("[describe-image] 错误: 未配置 API Key。")
+        print("  首次使用请运行: python describe_image.py --setup")
+        print("  或设置环境变量 DESCRIBE_IMAGE_API_KEY，或在 config.json 中填写 api_key。", file=sys.stderr)
+        sys.exit(1)
+    if not cfg.get("model"):
+        print("[describe-image] 错误: 未配置模型名 (model)。请运行 --setup 或设置 DESCRIBE_IMAGE_MODEL。", file=sys.stderr)
+        sys.exit(1)
+
     if args.test:
         # 用一张内置的 64x64 纯红测试图验证配置可用（合法 PNG，满足常见 VL 模型最小尺寸）
         test_png_b64 = (
@@ -373,15 +383,6 @@ def main():
         print("配置测试通过，视觉模型返回:")
         print(text)
         return
-
-    if not cfg.get("api_key") and not cfg.get("base_url", "").lower().startswith("http://localhost"):
-        print("[describe-image] 错误: 未配置 API Key。")
-        print("  首次使用请运行: python describe_image.py --setup")
-        print("  或设置环境变量 DESCRIBE_IMAGE_API_KEY，或在 config.json 中填写 api_key。", file=sys.stderr)
-        sys.exit(1)
-    if not cfg.get("model"):
-        print("[describe-image] 错误: 未配置模型名 (model)。请运行 --setup 或设置 DESCRIBE_IMAGE_MODEL。", file=sys.stderr)
-        sys.exit(1)
 
     prompt = args.prompt or cfg.get("default_prompt") or DEFAULT_PROMPT
     content = [{"type": "text", "text": prompt}]
