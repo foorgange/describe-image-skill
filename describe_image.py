@@ -171,13 +171,23 @@ def run_setup():
 
     default_url = preset["base_url"]
     url = _prompt(f"Base URL [回车默认 {default_url}]: ")
+    # custom 平台没有默认 URL，必须显式填写
+    while not (url or default_url):
+        print("[describe-image] 自定义平台必须填写 Base URL（例如 https://api.example.com/v1）", file=sys.stderr)
+        url = _prompt("Base URL: ")
     cfg["base_url"] = url or default_url
 
-    if preset["model"]:
+    # custom 平台没有默认模型，必须显式填写；其他平台用预设或旧 config 兜底
+    if key == "custom":
+        default_model = ""
+    elif preset["model"]:
         default_model = preset["model"]
     else:
         default_model = cfg.get("model", "")
     model = _prompt(f"视觉模型名 [回车默认 {default_model or '(必填)'}]: ")
+    while not (model or default_model):
+        print("[describe-image] 自定义平台必须填写视觉模型名（例如 my-vision-model）", file=sys.stderr)
+        model = _prompt("视觉模型名: ")
     cfg["model"] = model or default_model
 
     if preset["needs_key"]:
