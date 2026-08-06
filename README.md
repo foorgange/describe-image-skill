@@ -3,6 +3,9 @@
 Let non-vision models "see" images: hand the image to a separate vision model, get its description as text, and let your host model answer from that text.
 
 让没有视觉能力的模型也能"看懂"图片：把图片交给一个独立的视觉模型转述成文字，再由你的宿主模型基于这段文字回答。
+<img width="2334" height="1596" alt="屏幕截图 2026-08-06 143215" src="https://github.com/user-attachments/assets/d5fbe550-212d-4ea6-8217-386857230324" />
+<img width="2221" height="1589" alt="屏幕截图 2026-08-06 144028" src="https://github.com/user-attachments/assets/eadfdbbd-1ec5-42a6-ba58-db1251245cb5" />
+目前实测支持claude code和 opencode
 
 If your model does not accept images (e.g. DeepSeek, some local models), pasted screenshots only appear to you as `[Image: ...]` / `[Unsupported Image]` placeholders — you never see the pixels. This skill is built for exactly that case: it forwards the image to a vision model (SiliconFlow / OpenAI / Ollama / any OpenAI-compatible endpoint) and returns the recognition result as plain text that you can reason over.
 
