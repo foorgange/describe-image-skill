@@ -1,0 +1,10 @@
+# config.json 包含用户的 API Key，绝不能提交
+config.json
+
+# Python
+__pycache__/
+*.pyc
+
+# 系统
+.DS_Store
+Thumbs.db
