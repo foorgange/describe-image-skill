@@ -182,7 +182,7 @@ def run_setup():
 
     if preset["needs_key"]:
         try:
-            key_help = getpass("API Key (不回显) [回车跳过，改用环境变量 DESCRIBE_IMAGE_API_KEY]: ").strip()
+            key_help = getpass.getpass("API Key (不回显) [回车跳过，改用环境变量 DESCRIBE_IMAGE_API_KEY]: ").strip()
         except EOFError:
             print("\n[describe-image] 配置向导已取消（输入流已关闭）。", file=sys.stderr)
             sys.exit(0)
