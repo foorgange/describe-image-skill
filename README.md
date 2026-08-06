@@ -177,6 +177,26 @@ python describe_image.py --print-config
 
 ## Auto-trigger in Claude Code / opencode
 
+### First use: ask your agent to record the routing rule / 首次使用：让 agent 把识图路由写进记忆
+
+> **opencode 注意**: opencode 的 `observer` 子智能体会默认尝试读取图片（它假设模型带视觉）。本技能是给无视觉模型用的，所以 **opencode 下不会自动触发**——需要你首次使用时主动对 agent 说一句话，让它把规则写进记忆，之后所有会话才会先走本技能识图。
+>
+> **opencode note**: opencode's `observer` subagent reads images by default (it assumes a vision-capable model). This skill is for non-vision models, so **it does not auto-trigger in opencode**. On first use, explicitly tell the agent to record the routing rule into memory; only then will every session route image recognition through this skill first.
+
+首次使用请主动对 agent 说（示例）：
+
+```text
+把"图片识别统一走 describe-image 技能先转述成文字"这条规则写入你的记忆/说明文件，以后任何图片都先调用它。
+```
+
+（For first use, explicitly tell your agent: "record the rule that all image recognition should go through the describe-image skill's transcription first, so future sessions route images through it.")
+
+On first load, the skill also tries to write a "route images through describe-image first" reminder into your host environment's memory file on its own — the write is idempotent. In opencode, however, the observer subagent's default behavior can bypass this, so the explicit first-use instruction above is the reliable path.
+
+首次加载时技能也会尝试自行在你的宿主环境记忆文件写入一条"图片先走 describe-image 转述"的提醒（幂等）。但 opencode 的 observer 子智能体默认行为会绕过它，所以上面那句主动声明才是 opencode 下可靠的做法。
+
+### How the skill triggers / 技能如何触发
+
 本技能通过 `SKILL.md` 让宿主模型知道什么时候调用它。
 
 The skill uses `SKILL.md` to tell the host model when to invoke it:
