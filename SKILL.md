@@ -1,6 +1,13 @@
 ---
 name: describe-image
-description: Use ONLY when the user provides images or when visual/eye input is needed that your current text-only model cannot see. TRIGGERS include: (1) the message contains "[Image attachment detected. Saved to:" or "image attachment" or an image placeholder like "[Image:" / "[Unsupported Image]" / "[图片:" — a real image was pasted; (2) the message references an image file path/URL ending in .png/.jpg/.jpeg/.webp/.gif/.bmp or inside .opencode/images; (3) the user says 图片/截图/图像/照片/界面/图/表 内容识别, "看这张图", "图片里有什么". Describes the image via a vision model and returns it as text. Never use for pure-text questions or anything without an actual image.
+description: |
+  Use ONLY when the user provides images or when visual/eye input is needed that your current text-only model cannot see.
+  TRIGGERS include:
+  (1) the message contains "[Image attachment detected. Saved to:" or "image attachment" or an image placeholder like "[Image:" / "[Unsupported Image]" / "[图片:" — a real image was pasted;
+  (2) the message references an image file path/URL ending in .png/.jpg/.jpeg/.webp/.gif/.bmp or inside .opencode/images;
+  (3) the user says 图片/截图/图像/照片/界面/图/表 内容识别, "看这张图", "图片里有什么".
+  Describes the image via a vision model and returns it as text.
+  Never use for pure-text questions or anything without an actual image.
 ---
 
 # describe-image（图片转述）
