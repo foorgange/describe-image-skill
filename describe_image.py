@@ -358,7 +358,7 @@ def _sniff_mime(data_b64):
         return "image/jpeg"
     if head[:4] in (b"GIF8",):
         return "image/gif"
-    if head[:4] == b"RIFF" and data_b64[8:12] == "WEBP":
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return "image/webp"
     if head[:2] == b"BM":
         return "image/bmp"
@@ -417,9 +417,12 @@ def extract_images_from_transcript(transcript):
                         data = (src.get("data") or "").strip()
                         if not data:
                             continue
-                        mime = src.get("media_type") or item.get("media_type") or _sniff_mime(data)
+                        # data URI 先去前缀再嗅探/编码，避免把 "data:image/..." 当 base64
                         if data.startswith("data:"):
                             data = data.split(",", 1)[1]
+                        mime = src.get("media_type") or item.get("media_type") or _sniff_mime(data)
+                        if mime.startswith("data:"):
+                            mime = mime.split(";", 1)[0][5:]
                         images.append((mime, data))
                     elif item_type == "input_image":
                         # Codex 的图片块（存的是 base64 data URI；http 链接跳过，远端图请显式传参）
@@ -431,7 +434,7 @@ def extract_images_from_transcript(transcript):
                             if len(parts) != 2 or not parts[1]:
                                 continue  # 畸形 data URI，跳过
                             data = parts[1]
-                            mime = url.split(";", 1)[0][5:] or "image/png"
+                            mime = url.split(";", 1)[0][5:] or _sniff_mime(data)
                             images.append((mime, data))
                         else:
                             # 裸 base64，缺失数据则跳过
