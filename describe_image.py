@@ -177,14 +177,27 @@ def load_config():
     return cfg
 
 
+def _as_list(value):
+    """把配置项归一化成字符串列表；误填字符串或 None 时也按一项处理，避免 glob 被拆成字符。"""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (list, tuple)):
+        return [v for v in value if isinstance(v, str) and v.strip()]
+    return []
+
+
 def transcript_globs(cfg):
     """生效的会话记录 glob 列表：config.json 优先，否则内置默认。"""
-    return list(cfg.get("transcript_globs") or DEFAULT_TRANSCRIPT_GLOBS)
+    custom = _as_list(cfg.get("transcript_globs"))
+    return custom or DEFAULT_TRANSCRIPT_GLOBS
 
 
 def paste_dirs(cfg):
     """生效的粘贴图片落盘目录列表：config.json 优先，否则内置默认。"""
-    return list(cfg.get("paste_dirs") or DEFAULT_PASTE_DIRS)
+    custom = _as_list(cfg.get("paste_dirs"))
+    return custom or DEFAULT_PASTE_DIRS
 
 
 def _prompt(text):
@@ -262,9 +275,9 @@ def run_setup():
 
 def memory_files(cfg):
     """生效的宿主指令文件列表：config.json 优先，否则内置默认 + opencode。"""
-    custom = cfg.get("memory_files")
+    custom = _as_list(cfg.get("memory_files"))
     if custom:
-        return list(custom)
+        return custom
     return DEFAULT_MEMORY_FILES + [OPENCODE_AGENTS_PATH]
 
 
@@ -331,7 +344,14 @@ def to_image_url(p):
 
 
 def _sniff_mime(data_b64):
-    head = base64.b64decode(data_b64[:16] + "=" * ((4 - len(data_b64[:16]) % 4) % 4))
+    """从 base64 串嗅探图片格式；畸形输入不抛异常，兜底返回 png。"""
+    head = ""
+    try:
+        sample = data_b64[:16]
+        sample = sample + "=" * ((4 - len(sample) % 4) % 4)
+        head = base64.b64decode(sample)
+    except Exception:
+        return "image/png"
     if head[:8] == b"\x89PNG\r\n\x1a\n":
         return "image/png"
     if head[:2] == b"\xff\xd8":
@@ -343,6 +363,17 @@ def _sniff_mime(data_b64):
     if head[:2] == b"BM":
         return "image/bmp"
     return "image/png"
+
+
+def _is_base64(data):
+    """宽松校验 base64 串（容忍末尾换行/空白与缺失 padding）；非 base64 返回 False。"""
+    s = data.strip().replace("\n", "").replace("\r", "").replace(" ", "")
+    if not s:
+        return False
+    s = s.rstrip("=")
+    if len(s) % 4 == 1:
+        return False  # base64 长度不可能余 1
+    return all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/" for c in s)
 
 
 def extract_images_from_transcript(transcript):
@@ -391,13 +422,22 @@ def extract_images_from_transcript(transcript):
                             data = data.split(",", 1)[1]
                         images.append((mime, data))
                     elif item_type == "input_image":
-                        # Codex 的图片块
+                        # Codex 的图片块（存的是 base64 data URI；http 链接跳过，远端图请显式传参）
                         url = (item.get("image_url") or {}).get("url") if isinstance(item.get("image_url"), dict) else item.get("image_url")
-                        if isinstance(url, str):
-                            data = url.split(",", 1)[1] if url.startswith("data:") else url
-                            mime = url.split(";", 1)[0][5:] if url.startswith("data:") else _sniff_mime(data)
-                            if data:
-                                images.append((mime or "image/png", data))
+                        if not isinstance(url, str) or not url or url.startswith(("http://", "https://")):
+                            continue
+                        if url.startswith("data:"):
+                            parts = url.split(",", 1)
+                            if len(parts) != 2 or not parts[1]:
+                                continue  # 畸形 data URI，跳过
+                            data = parts[1]
+                            mime = url.split(";", 1)[0][5:] or "image/png"
+                            images.append((mime, data))
+                        else:
+                            # 裸 base64，缺失数据则跳过
+                            if not _is_base64(url):
+                                continue
+                            images.append((_sniff_mime(url), url))
     except Exception as e:
         print(f"[describe-image] 警告: 读取 transcript {transcript} 失败: {e}", file=sys.stderr)
     return images
@@ -556,7 +596,7 @@ def main():
                 print(f"[describe-image] 错误: {e}", file=sys.stderr)
                 sys.exit(1)
     else:
-        candidates = [args.transcript] if args.transcript else find_candidates()
+        candidates = [args.transcript] if args.transcript else find_candidates(cfg)
         used, images = set(), []
         for cand in candidates:
             if not cand or cand in used:
