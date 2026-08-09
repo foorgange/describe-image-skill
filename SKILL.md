@@ -14,7 +14,7 @@ description: |
 
 Your current LLM has NO image/vision capability (e.g. DeepSeek, some local models). When the user needs something "seen" (an image, screenshot, photo, diagram, UI, chart, scanned document), transcribe the image into text using this skill's vision-model script.
 
-Install location: this skill's files live in `~/.claude/skills/describe-image/` (or wherever the repo `describe-image-skill` was cloned). The script is `describe_image.py`.
+Install location: this skill's files live in `~/.claude/skills/describe-image/` (Claude Code), `~/.config/opencode/skills/describe-image/` (opencode), `~/.codex/skills/describe-image/` (Codex), or wherever the repo `describe-image-skill` was cloned. The script is `describe_image.py`.
 
 ## First-use setup: write skill memory (首次使用自动写入记忆)
 
@@ -23,6 +23,8 @@ Install location: this skill's files live in `~/.claude/skills/describe-image/` 
 1. **Detect your host environment**:
    - **Claude Code** → the path `~/.claude/projects/` exists (project memory lives at `~/.claude/projects/<project-slug>/memory/MEMORY.md`).
    - **opencode** → the path `~/.config/opencode/` exists, or the user message contains the opencode placeholder `[Image attachment detected. Saved to:`.
+   - **Codex** → the path `~/.codex/` exists (instructions file `~/.codex/AGENTS.md`).
+   - **Gemini CLI** → the path `~/.gemini/` exists (instructions file `~/.gemini/AGENTS.md`).
    - **other hosts** → any persistent instructions file for that host (e.g. `AGENTS.md`, `CLAUDE.md`).
 2. **Memory entry to ensure** (identical text for all hosts; only the target file differs):
 
@@ -33,6 +35,8 @@ Install location: this skill's files live in `~/.claude/skills/describe-image/` 
 3. **Where to write it**:
    - **Claude Code** → append to `~/.claude/projects/<project-slug>/memory/MEMORY.md` (also ensure the linked `describe-image-skill-setup.md` sits next to it).
    - **opencode** → append to `~/.config/opencode/AGENTS.md` (create the file if absent).
+   - **Codex** → append to `~/.codex/AGENTS.md`.
+   - **Gemini CLI** → append to `~/.gemini/AGENTS.md`.
    - **other hosts** → append to that host's persistent instructions file.
 4. Check for the exact entry text first; write only if absent. Do this once per session at most — if you already verified it this session, skip.
 
@@ -53,7 +57,7 @@ python "$HOME\.claude\skills\describe-image\describe_image.py" --setup
 - The user pastes/sends an image, screenshot, photo, diagram, UI mockup, or asks about the content of any image.
 - **opencode 粘贴场景**: the message contains `[Image attachment detected. Saved to: <path>]` — opencode saved the pasted image to `<path>` (usually inside `.opencode/images/...`) and passes the path as text because your model has no vision. **You MUST transcribe it — extract `<path>` from that line and run the script with it.**
 - The message contains image references: markdown `![alt](path)`, a line like `Image file attached: <path>`, or a file path ending in `.png/.jpg/.jpeg/.webp/.gif/.bmp`.
-- The message contains an image placeholder such as `[Image: original WxH, displayed at ...]`, `[Unsupported Image]`, `[图片: ...]`, or a multi-line base64 `data:` URI / attached image block — in Claude Code / opencode with a non-vision model these mean a real image was pasted but you cannot see its pixels. **You MUST still transcribe it** — the skill's script extracts the image from the session transcript automatically.
+- The message contains an image placeholder such as `[Image: original WxH, displayed at ...]`, `[Unsupported Image]`, `[图片: ...]`, or a multi-line base64 `data:` URI / attached image block — in Claude Code / opencode / Codex / Gemini CLI with a non-vision model these mean a real image was pasted but you cannot see its pixels. **You MUST still transcribe it** — the skill's script extracts the image from the session transcript automatically.
 - The user says things like "看这张图", "这个截图", "图片里有什么", "识别/描述这张图片", "图里写的什么字".
 - Do NOT use for pure-text questions with no image attached.
 
@@ -61,7 +65,7 @@ python "$HOME\.claude\skills\describe-image\describe_image.py" --setup
 
 1. Decide what to pass:
    - **Explicit image path/URL in the message** → pass those path(s) directly. (In opencode, extract the path from `[Image attachment detected. Saved to: <path>]`.)
-   - **Pasted image with no path** (`[Image: ...]` / `[Unsupported Image]` / attached image block) → **run with NO image argument**. The script auto-scans your recent Claude Code / opencode session transcripts, extracts the most recent pasted image (base64), and sends it to the vision model. No path extraction needed.
+   - **Pasted image with no path** (`[Image: ...]` / `[Unsupported Image]` / attached image block) → **run with NO image argument**. The script auto-scans recent session transcripts of the known hosts (Claude Code `~/.claude/projects/**/*.jsonl`, Codex `~/.codex/sessions/**/rollout-*.jsonl`, Gemini CLI `~/.gemini/**/*.jsonl`, opencode's paste drop dir), extracts the most recent pasted image, and sends it to the vision model. No path extraction needed.
 2. Run the script (no image paths = transcript auto-extract; with paths = explicit):
 
    ```powershell
@@ -90,3 +94,17 @@ python "$HOME\.claude\skills\describe-image\describe_image.py" --setup
 - The vision model only responds about the image; the transcription is then used by you to reason and reply in the main conversation.
 - If the script reports an error (no image found in transcript, file not found, API error), report it honestly to the user and ask them to double-check the image / resend it.
 - Env vars `DESCRIBE_IMAGE_BASE_URL` / `DESCRIBE_IMAGE_API_KEY` / `DESCRIBE_IMAGE_MODEL` override config.json.
+
+## 其他宿主（非 Claude Code / opencode）
+
+The script's auto-extract and memory-write cover several hosts out of the box: **Claude Code, opencode, Codex, Gemini CLI**. For any other host, or to point at a non-default session location, configure in `config.json` (see `config.example.json`):
+
+```json
+{
+  "transcript_globs": ["C:/Users/<you>/<other-host>/**/*.jsonl"],
+  "paste_dirs": ["C:/Users/<you>/<other-host>/pasted-images"],
+  "memory_files": ["C:/Users/<you>/.config/<other-host>/AGENTS.md"]
+}
+```
+
+Empty list = built-in defaults (shown above). If the host's transcript format differs from the three supported shapes (Claude Code `image.source.base64`, Codex `input_image`, Gemini `inlineData`), pass the pasted image as an explicit path/URL instead — auto-extract needs no special casing.

@@ -5,5 +5,8 @@
   "api_key": "",
   "max_tokens": 1000,
   "temperature": 0.7,
-  "default_prompt": "请详细、准确地描述这张图片的内容：包括所有可见的文字(逐字转录)、物体、人物、场景、布局、颜色和任何值得注意的细节。"
+  "default_prompt": "请详细、准确地描述这张图片的内容：包括所有可见的文字(逐字转录)、物体、人物、场景、布局、颜色和任何值得注意的细节。",
+  "transcript_globs": [],
+  "paste_dirs": [],
+  "memory_files": []
 }

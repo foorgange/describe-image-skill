@@ -5,7 +5,7 @@ Let non-vision models "see" images: hand the image to a separate vision model, g
 让没有视觉能力的模型也能"看懂"图片：把图片交给一个独立的视觉模型转述成文字，再由你的宿主模型基于这段文字回答。
 <img width="2334" height="1596" alt="屏幕截图 2026-08-06 143215" src="https://github.com/user-attachments/assets/d5fbe550-212d-4ea6-8217-386857230324" />
 <img width="2221" height="1589" alt="屏幕截图 2026-08-06 144028" src="https://github.com/user-attachments/assets/eadfdbbd-1ec5-42a6-ba58-db1251245cb5" />
-目前实测支持claude code和 opencode
+目前实测支持 claude code、opencode，并内置 Codex、Gemini CLI 的会话记录解析与记忆写入；其他宿主可在 `config.json` 里指定扫描路径与记忆文件。
 
 If your model does not accept images (e.g. DeepSeek, some local models), pasted screenshots only appear to you as `[Image: ...]` / `[Unsupported Image]` placeholders — you never see the pixels. This skill is built for exactly that case: it forwards the image to a vision model (SiliconFlow / OpenAI / Ollama / any OpenAI-compatible endpoint) and returns the recognition result as plain text that you can reason over.
 
@@ -38,10 +38,10 @@ This skill does not require you to change models or to have a host that supports
   - 支持三种图片来源：
   - Explicit local path or URL.
   - 显式传入本地路径或 URL。
-  - Auto-extract pasted images from recent session transcripts (Claude Code and opencode).
-  - 自动从最近的会话记录（transcript）提取粘贴的图片——Claude Code 与 opencode 都支持。
-  - Fallback to opencode's pasted-image drop directory.
-  - opencode 粘贴图片的落盘目录兜底。
+  - Auto-extract pasted images from recent session transcripts (Claude Code, opencode, Codex, Gemini CLI; other hosts via `config.json`).
+  - 自动从最近的会话记录（transcript）提取粘贴的图片——Claude Code、opencode、Codex、Gemini CLI 都支持；其他宿主可在 `config.json` 里配置扫描路径。
+  - Fallback to opencode's pasted-image drop directory (other hosts' drop dirs are configurable in `config.json`).
+  - opencode 粘贴图片的落盘目录兜底（其他宿主的落盘目录可在 `config.json` 里配置）。
 - Pure Python standard library, zero third-party dependencies.
 - 纯 Python 标准库，零第三方依赖。
 - Config precedence: environment variables > `config.json` > built-in defaults.
@@ -62,6 +62,10 @@ git clone https://github.com/foorgange/describe-image-skill.git describe-image
 For opencode, the skills directory is `~/.config/opencode/skills/` — put the `describe-image` folder there (or rely on shared skills under `~/.claude/skills`, depending on whether your opencode version scans that directory).
 
 对于 opencode：技能目录是 `~/.config/opencode/skills/`，同样把 `describe-image` 这个文件夹放进去即可（或用 `~/.claude/skills` 下的共享技能，取决于你的 opencode 版本是否扫描该目录）。
+
+For Codex / Gemini CLI, the skills directory is `~/.codex/skills/` / `~/.gemini/skills/` (the repo clone also works if the host scans it). See [Multi-host support](#multi-host-support--多宿主支持) below.
+
+对于 Codex / Gemini CLI：技能目录是 `~/.codex/skills/` / `~/.gemini/skills/`（克隆到这些目录即可，宿主会扫描）。见下面的"多宿主支持"。
 
 Expected layout / 装好后确认目录结构：
 
@@ -133,6 +137,43 @@ The model names above are only defaults — adjust them to what your provider ac
 
 表中模型名只是默认值，按你实际的可用模型改即可。任何 OpenAI 兼容端点都能用 `custom` 预设接入。
 
+## Multi-host support / 多宿主支持
+
+The auto-extract and memory-write paths cover several hosts out of the box. The script scans these locations for pasted images, newest first:
+
+脚本默认扫描这些位置提取粘贴图片（按修改时间新→旧）：
+
+| Host / 宿主 | Session transcript / 会话记录 | Pasted-image drop dir / 落盘目录 |
+|---|---|---|
+| Claude Code | `~/.claude/projects/**/*.jsonl` | — |
+| opencode | (same as left, plus) | `%LOCALAPPDATA%\Temp\opencode\` |
+| Codex | `~/.codex/sessions/**/rollout-*.jsonl` | — |
+| Gemini CLI | `~/.gemini/**/*.jsonl` | — |
+
+Three pasted-image formats are understood inside transcripts: Claude Code's `{"type":"image","source":{"type":"base64",...}}`, Codex's `{"type":"input_image","image_url":"data:...;base64,..."}`, and Gemini's `{"inlineData":{"data":"<base64>","mimeType":...}}`.
+
+解析的图片块格式：Claude Code 的 `image.source.base64`、Codex 的 `input_image.image_url`、Gemini 的 `inlineData`。
+
+On every run, the script also idempotently writes the "route images through describe-image first" rule into the host's instructions file — `~/.codex/AGENTS.md` and `~/.gemini/AGENTS.md` (plus opencode's `~/.config/opencode/AGENTS.md`), only if that file or its directory already exists (so it never creates folders for hosts you do not use). Claude Code's memory file is written by the skill itself (see [SKILL.md](SKILL.md)).
+
+脚本每次运行也会幂等地把"图片先走 describe-image 转述"写入宿主指令文件——`~/.codex/AGENTS.md`、`~/.gemini/AGENTS.md`（以及 opencode 的 `~/.config/opencode/AGENTS.md`），且仅在文件或其目录已存在时才写（不会给没用的宿主凭空建目录）。Claude Code 的记忆文件由技能本体写入。
+
+**Any other host** (or a non-default session location) → configure in `config.json` (see `config.example.json`):
+
+**其他宿主**（或非默认的会话路径）→ 在 `config.json` 里配置（参考 `config.example.json`）：
+
+```json
+{
+  "transcript_globs": ["C:/Users/<you>/<other-host>/**/*.jsonl"],
+  "paste_dirs": ["C:/Users/<you>/<other-host>/pasted-images"],
+  "memory_files": ["C:/Users/<you>/.config/<other-host>/AGENTS.md"]
+}
+```
+
+Empty list = built-in defaults. If the host's transcript format is not one of the three above, pass the pasted image as an explicit path/URL instead.
+
+留空 = 使用内置默认。若该宿主的会话格式不是上面三种，直接把图片路径/URL 显式传参即可。
+
 ## Usage / 用法
 
 ### Transcribe one image (explicit path) / 转述一张图片（显式路径）
@@ -145,7 +186,7 @@ python describe_image.py "https://example.com/x.png"     # remote URL / 远程 U
 
 ### Transcribe a pasted image (auto-extract) / 转述粘贴进对话的图片（自动提取）
 
-After you paste an image in your Claude Code / opencode session, run with no image argument:
+After you paste an image in your Claude Code / opencode / Codex / Gemini CLI session, run with no image argument:
 
 在你的 Claude Code / opencode 会话里粘贴图片后，不带任何图片参数直接运行：
 
@@ -175,7 +216,7 @@ python describe_image.py --transcript "C:\Users\you\.claude\projects\your-projec
 python describe_image.py --print-config
 ```
 
-## Auto-trigger in Claude Code / opencode
+## Auto-trigger across hosts / 各宿主自动触发
 
 ### First use: ask your agent to record the routing rule / 首次使用：让 agent 把识图路由写进记忆
 
@@ -195,9 +236,9 @@ On first load, the skill also tries to write a "route images through describe-im
 
 首次加载时技能也会尝试自行在你的宿主环境记忆文件写入一条"图片先走 describe-image 转述"的提醒（幂等）。但 opencode 的 observer 子智能体默认行为会绕过它，所以上面那句主动声明才是 opencode 下可靠的做法。
 
-> **自动写入**: 从 v1.x 起，`describe_image.py` 每次运行都会**自动检测 opencode 环境**（存在 `~/.config/opencode/`），并把上面的路由条目**幂等**写入 `~/.config/opencode/AGENTS.md`（已存在则跳过，不重复追加；文件/目录不存在会自动创建）。也就是说，只要你在 opencode 里跑过一次 `python describe_image.py ...`，规则就已经写进 AGENTS.md 了——上面的"首次主动声明"从此变成兜底手段，而非必需步骤。Claude Code 环境检测不到 `~/.config/opencode/`，不会误写。
+> **自动写入**: 从 v1.x 起，`describe_image.py` 每次运行都会**自动检测各宿主环境**，并把上面的路由条目**幂等**写入对应宿主指令文件——opencode 的 `~/.config/opencode/AGENTS.md`、Codex 的 `~/.codex/AGENTS.md`、Gemini CLI 的 `~/.gemini/AGENTS.md`（已存在则跳过，不重复追加；文件/目录不存在会自动创建；只在文件或其目录已存在时写，不会给没用的宿主凭空建目录）。也就是说，只要你在对应宿主里跑过一次 `python describe_image.py ...`，规则就已经写进它的 AGENTS.md 了——上面的"首次主动声明"从此变成兜底手段，而非必需步骤。Claude Code 环境的记忆文件由技能本体写入。
 >
-> **Auto-write**: since v1.x, every run of `describe_image.py` **auto-detects opencode** (checks for `~/.config/opencode/`) and **idempotently** appends the routing entry above to `~/.config/opencode/AGENTS.md` (skips if already present, never duplicates; creates file/dir if absent). So once you run `python describe_image.py ...` inside opencode, the rule is already in AGENTS.md — the manual "first-use statement" above becomes a fallback, not a requirement. In Claude Code the `~/.config/opencode/` dir does not exist, so nothing is written.
+> **Auto-write**: since v1.x, every run of `describe_image.py` **auto-detects each host environment** and **idempotently** appends the routing entry above to that host's instructions file — opencode's `~/.config/opencode/AGENTS.md`, Codex's `~/.codex/AGENTS.md`, Gemini CLI's `~/.gemini/AGENTS.md` (skips if already present, never duplicates; creates file/dir if absent; only writes when the file or its directory already exists, so no folders are created for hosts you do not use). So once you run `python describe_image.py ...` inside a host, the rule is already in its AGENTS.md — the manual "first-use statement" above becomes a fallback, not a requirement. Claude Code's memory file is written by the skill itself.
 
 ### How the skill triggers / 技能如何触发
 
@@ -231,9 +272,9 @@ If your host environment (e.g. some opencode versions) does not scan `~/.claude/
 5. The host model reads that text and answers the user.
    宿主模型读取这段文字，回答用户的问题。
 
-How pasted images are located: Claude Code stores pasted images as `{"type":"image","source":{"type":"base64",...}}` inside `~/.claude/projects/**/*.jsonl` session transcripts; opencode stores them in transcripts too and also drops image files into `%LOCALAPPDATA%\Temp\opencode\`. The script checks both locations and uses the newest one.
+How pasted images are located: Claude Code stores pasted images as `{"type":"image","source":{"type":"base64",...}}` inside `~/.claude/projects/**/*.jsonl` session transcripts; opencode stores them in transcripts too and also drops image files into `%LOCALAPPDATA%\Temp\opencode\`; Codex stores them as `input_image` blocks in `~/.codex/sessions/**/rollout-*.jsonl`; Gemini CLI as `inlineData` in `~/.gemini/**/*.jsonl`. The script scans all configured locations and uses the newest one (see [Multi-host support](#multi-host-support--多宿主支持)).
 
-提取粘贴图片的机制：Claude Code 会把粘贴的图片以 `{"type":"image","source":{"type":"base64",...}}` 存在 `~/.claude/projects/**/*.jsonl` 会话记录里；opencode 除了同样存在 transcript，还会把图片落到 `%LOCALAPPDATA%\Temp\opencode\`。脚本两个位置都会找，取最新的。
+提取粘贴图片的机制：Claude Code 会把粘贴的图片以 `{"type":"image","source":{"type":"base64",...}}` 存在 `~/.claude/projects/**/*.jsonl` 会话记录里；opencode 除了同样存在 transcript，还会把图片落到 `%LOCALAPPDATA%\Temp\opencode\`；Codex 以 `input_image` 块存在 `~/.codex/sessions/**/rollout-*.jsonl`；Gemini CLI 以 `inlineData` 存在 `~/.gemini/**/*.jsonl`。脚本会扫描所有配置位置，取最新的（见上面的"多宿主支持"）。
 
 ## Security / 安全
 

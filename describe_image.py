@@ -19,6 +19,12 @@
   DESCRIBE_IMAGE_API_KEY    平台 API Key（也可以只放 config.json）
   DESCRIBE_IMAGE_MODEL      视觉模型名
 
+自动提取的图片来源覆盖常见宿主：Claude Code / Codex / Gemini CLI 的会话
+transcript、opencode 的粘贴落盘目录。其他宿主可在 config.json 里配置:
+  transcript_globs   会话记录 glob 列表（空数组 = 用内置默认）
+  paste_dirs         粘贴图片落盘目录列表（空数组 = 用内置默认）
+  memory_files       需要写入"图片先走本技能转述"路由的宿主指令文件列表
+
 注意: config.json 含 API Key，已在 .gitignore 中排除，切勿提交到仓库。
 """
 
@@ -101,17 +107,35 @@ PROVIDER_PRESETS = {
     },
 }
 
-# 粘贴的图片存放在会话 transcript 中。Claude Code 路径:
-#   ~/.claude/projects/<工作目录>/<会话ID>.jsonl
-# 图片以 {"type":"image","source":{"type":"base64","media_type":None,"data":"<base64>"}}
-# 形式存在。opencode 额外会把粘贴图片落盘到 %LOCALAPPDATA%\Temp\opencode\。
-TRANSCRIPT_GLOBS = [
+# 粘贴的图片存放在会话 transcript 中。内置默认扫描位置（可按宿主覆盖）:
+#   Claude Code: ~/.claude/projects/<工作目录>/<会话ID>.jsonl
+#               图片以 {"type":"image","source":{"type":"base64","media_type":None,"data":"<base64>"}}
+#               形式存在。
+#   Codex:       ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
+#               图片以 payload.content[].{"type":"input_image","image_url":"data:...;base64,..."}
+#               形式存在。
+#   Gemini CLI:  ~/.gemini/*.jsonl（图片以 {"inlineData":{"data":"<base64>","mimeType":...}} 形式存在）
+#   opencode:    把粘贴图片落盘到 %LOCALAPPDATA%\Temp\opencode\。
+DEFAULT_TRANSCRIPT_GLOBS = [
     os.path.join(os.path.expanduser("~"), ".claude", "projects", "**", "*.jsonl"),
+    os.path.join(os.path.expanduser("~"), ".codex", "sessions", "**", "rollout-*.jsonl"),
+    os.path.join(os.path.expanduser("~"), ".gemini", "**", "*.jsonl"),
 ]
-OPENCODE_TEMP_DIR = os.path.join(
-    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Temp", "opencode"
-)
+DEFAULT_PASTE_DIRS = [
+    os.path.join(
+        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Temp", "opencode"
+    ),
+]
 
+# 宿主环境的持久指令文件。脚本每次运行都会把这些文件里写一条"图片先走本技能
+# 转述"的规则（幂等，已存在则跳过），使所有会话（含子智能体）都先调用本技能识图。
+#   Claude Code: ~/.claude/CLAUDE.md（写进 ~/.claude/projects/*/memory/MEMORY.md 由 SKILL.md 负责）
+#   Codex:       ~/.codex/AGENTS.md
+#   Gemini CLI:  ~/.gemini/AGENTS.md
+DEFAULT_MEMORY_FILES = [
+    os.path.join(os.path.expanduser("~"), ".codex", "AGENTS.md"),
+    os.path.join(os.path.expanduser("~"), ".gemini", "AGENTS.md"),
+]
 # opencode 的持久指令文件。检测到 opencode 时，把"图片先走本技能转述"的规则
 # 幂等写入，使所有 opencode 会话（含 observer 子智能体）都先调用本技能识图。
 OPENCODE_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "opencode")
@@ -131,6 +155,10 @@ def default_config():
         "max_tokens": 1000,
         "temperature": 0.7,
         "default_prompt": DEFAULT_PROMPT,
+        # 图片来源与宿主记忆文件（空列表 = 用内置默认，见文件头注释）
+        "transcript_globs": [],
+        "paste_dirs": [],
+        "memory_files": [],
     }
 
 
@@ -147,6 +175,16 @@ def load_config():
     cfg["base_url"] = os.environ.get("DESCRIBE_IMAGE_BASE_URL") or cfg.get("base_url", "")
     cfg["model"] = os.environ.get("DESCRIBE_IMAGE_MODEL") or cfg.get("model", "")
     return cfg
+
+
+def transcript_globs(cfg):
+    """生效的会话记录 glob 列表：config.json 优先，否则内置默认。"""
+    return list(cfg.get("transcript_globs") or DEFAULT_TRANSCRIPT_GLOBS)
+
+
+def paste_dirs(cfg):
+    """生效的粘贴图片落盘目录列表：config.json 优先，否则内置默认。"""
+    return list(cfg.get("paste_dirs") or DEFAULT_PASTE_DIRS)
 
 
 def _prompt(text):
@@ -222,39 +260,59 @@ def run_setup():
     print("或直接转述一张图片: python describe_image.py <图片路径>")
 
 
-def ensure_opencode_memory():
-    """检测到 opencode 时，把"图片先走 describe-image 转述"的规则幂等写入 AGENTS.md。
+def memory_files(cfg):
+    """生效的宿主指令文件列表：config.json 优先，否则内置默认 + opencode。"""
+    custom = cfg.get("memory_files")
+    if custom:
+        return list(custom)
+    return DEFAULT_MEMORY_FILES + [OPENCODE_AGENTS_PATH]
 
-    背景: opencode 的 observer 子智能体会默认尝试直接读取图片（它假设模型带视觉），
-    所以本技能不会自动触发。需要把路由规则写进 opencode 的持久指令文件 AGENTS.md，
-    之后的 opencode 会话（含 observer）才会先走本技能识图。
+
+def _ensure_memory_file(path):
+    """把"图片先走 describe-image 转述"的规则幂等写入宿主指令文件。
+
+    只写入该宿主确实存在的文件（文件或其父目录已存在才写），避免在不用的
+    宿主上凭空创建目录。已存在该条目则跳过，不重复追加。
     """
-    if not os.path.isdir(OPENCODE_CONFIG_DIR):
-        return 0  # 不是 opencode 环境，跳过
-    agents_path = OPENCODE_AGENTS_PATH
-    # 读现有内容，检查是否已存在（幂等，不重复追加）
+    if not path:
+        return 0
+    parent = os.path.dirname(path)
+    if not (os.path.exists(path) or os.path.isdir(parent)):
+        return 0  # 该宿主环境不存在，跳过
     existing = ""
-    if os.path.exists(agents_path):
+    if os.path.exists(path):
         try:
-            with open(agents_path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 existing = f.read()
         except OSError as e:
-            print(f"[describe-image] 警告: 读取 {agents_path} 失败: {e}", file=sys.stderr)
+            print(f"[describe-image] 警告: 读取 {path} 失败: {e}", file=sys.stderr)
             return 0
     if OPENCODE_MEMORY_ENTRY in existing:
         return 0  # 已写入，幂等跳过
-    # 追加到 AGENTS.md（文件不存在则创建；os.makedirs 幂等）
     try:
-        os.makedirs(OPENCODE_CONFIG_DIR, exist_ok=True)
-        with open(agents_path, "a", encoding="utf-8") as f:
+        os.makedirs(parent, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
             if existing and not existing.endswith("\n"):
                 f.write("\n")
             f.write("\n" + OPENCODE_MEMORY_ENTRY + "\n")
     except OSError as e:
-        print(f"[describe-image] 警告: 写入 {agents_path} 失败: {e}", file=sys.stderr)
+        print(f"[describe-image] 警告: 写入 {path} 失败: {e}", file=sys.stderr)
         return 0
-    print(f"[describe-image] 已写入 opencode 记忆: {agents_path}", file=sys.stderr)
+    print(f"[describe-image] 已写入识图路由记忆: {path}", file=sys.stderr)
     return 1
+
+
+def ensure_memory_files(cfg):
+    """把识图路由规则写入所有生效的宿主指令文件。
+
+    背景: 部分宿主（如 opencode 的 observer、Codex 的子智能体）会默认尝试直接
+    读取图片（它假设模型带视觉），所以本技能不会自动触发。需要把路由规则写进
+    宿主的持久指令文件，之后的会话（含子智能体）才会先走本技能识图。
+    """
+    written = 0
+    for path in memory_files(cfg):
+        written += _ensure_memory_file(path)
+    return written
 
 
 def to_image_url(p):
@@ -288,9 +346,12 @@ def _sniff_mime(data_b64):
 
 
 def extract_images_from_transcript(transcript):
-    """从 Claude Code / opencode 的会话 transcript(.jsonl) 中提取所有图片块。
+    """从宿主会话 transcript(.jsonl) 中提取所有图片块。
 
-    返回 [(mime, base64data), ...]。
+    返回 [(mime, base64data), ...]。兼容三种常见的图片块格式:
+      Claude Code:  {"type":"image","source":{"type":"base64","media_type":...,"data":...}}
+      Codex:        payload.content[].{"type":"input_image","image_url":"data:...;base64,..."}
+      Gemini CLI:   {"inlineData":{"data":"<base64>","mimeType":...}}（在 content 内或直接字段）
     """
     images = []
     try:
@@ -303,44 +364,87 @@ def extract_images_from_transcript(transcript):
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                content = None
-                if isinstance(obj, dict) and obj.get("type") == "user":
-                    msg = obj.get("message") or {}
-                    content = msg.get("content")
-                elif isinstance(obj, dict) and obj.get("type") == "message":
-                    content = obj.get("content")
-                if isinstance(content, str):
+                items = _transcript_content_items(obj)
+                if items is None:
                     continue
-                if not isinstance(content, list):
-                    continue
-                for item in content:
+                for item in items:
                     if not isinstance(item, dict):
                         continue
-                    if item.get("type") != "image":
+                    # Gemini 的 inlineData 直接挂在 content/parts 条目上（可能无 "type" 键）
+                    if "inlineData" in item:
+                        inline = item["inlineData"]
+                        data = (inline.get("data") or "").strip()
+                        if data:
+                            mime = inline.get("mimeType") or _sniff_mime(data)
+                            images.append((mime, data))
                         continue
-                    src = item.get("source") or {}
-                    if src.get("type") != "base64":
-                        continue
-                    data = (src.get("data") or "").strip()
-                    if not data:
-                        continue
-                    mime = src.get("media_type") or item.get("media_type") or _sniff_mime(data)
-                    if data.startswith("data:"):
-                        data = data.split(",", 1)[1]
-                    images.append((mime, data))
+                    item_type = item.get("type")
+                    if item_type == "image":
+                        src = item.get("source") or {}
+                        if src.get("type") != "base64":
+                            continue
+                        data = (src.get("data") or "").strip()
+                        if not data:
+                            continue
+                        mime = src.get("media_type") or item.get("media_type") or _sniff_mime(data)
+                        if data.startswith("data:"):
+                            data = data.split(",", 1)[1]
+                        images.append((mime, data))
+                    elif item_type == "input_image":
+                        # Codex 的图片块
+                        url = (item.get("image_url") or {}).get("url") if isinstance(item.get("image_url"), dict) else item.get("image_url")
+                        if isinstance(url, str):
+                            data = url.split(",", 1)[1] if url.startswith("data:") else url
+                            mime = url.split(";", 1)[0][5:] if url.startswith("data:") else _sniff_mime(data)
+                            if data:
+                                images.append((mime or "image/png", data))
     except Exception as e:
         print(f"[describe-image] 警告: 读取 transcript {transcript} 失败: {e}", file=sys.stderr)
     return images
 
 
-def find_candidates():
-    """按修改时间倒序返回候选来源：会话 transcript 与 opencode 粘贴图片目录。"""
+def _transcript_content_items(obj):
+    """从一行 transcript 对象里取出"内容条目列表"；取不到则返回 None。
+
+    兼容不同宿主的行结构:
+      Claude Code:  {"type":"user","message":{"content":[...]}} 或 {"type":"message","content":[...]}
+      Codex:        {"type":"response_item","payload":{"type":"message","role":"user","content":[...]}}
+      Gemini CLI:   {"role":"user","parts":[...]} 或 {"role":"user","content":[...]}
+    """
+    if not isinstance(obj, dict):
+        return None
+    content = None
+    if obj.get("type") == "user" and isinstance(obj.get("message"), dict):
+        content = obj["message"].get("content")
+    elif obj.get("type") == "message":
+        content = obj.get("content")
+    elif obj.get("type") == "response_item" and isinstance(obj.get("payload"), dict):
+        # Codex: response_item.payload.message.content
+        content = obj["payload"].get("content")
+    elif isinstance(obj.get("payload"), dict) and isinstance(obj["payload"].get("message"), dict):
+        content = obj["payload"]["message"].get("content")
+    if content is None and "parts" in obj and isinstance(obj["parts"], list):
+        # Gemini 的 parts 就是内容条目列表
+        return obj["parts"]
+    if content is None and "inlineData" in obj:
+        return [obj]
+    if isinstance(content, str):
+        return None
+    if not isinstance(content, list):
+        return None
+    return content
+
+
+def find_candidates(cfg=None):
+    """按修改时间倒序返回候选来源：会话 transcript 与各宿主粘贴图片目录。"""
+    cfg = cfg or load_config()
     found = []
-    for pat in TRANSCRIPT_GLOBS:
+    for pat in transcript_globs(cfg):
         found.extend(glob.glob(pat, recursive=True))
-    if os.path.isdir(OPENCODE_TEMP_DIR):
-        for ext in MIME:
-            found.extend(glob.glob(os.path.join(OPENCODE_TEMP_DIR, "*" + ext)))
+    for d in paste_dirs(cfg):
+        if os.path.isdir(d):
+            for ext in MIME:
+                found.extend(glob.glob(os.path.join(d, "*" + ext)))
     seen, uniq = set(), []
     for f in sorted(found, key=lambda p: os.path.getmtime(p), reverse=True):
         if f in seen:
@@ -375,8 +479,9 @@ def main():
         except Exception:
             pass
 
-    # 检测 opencode 环境，幂等写入识图路由规则到其 AGENTS.md（所有运行模式都触发）
-    ensure_opencode_memory()
+    cfg = load_config()
+    # 检测各宿主环境，幂等写入识图路由规则到其指令文件（所有运行模式都触发）
+    ensure_memory_files(cfg)
 
     ap = argparse.ArgumentParser(description="用视觉模型把图片转述成文字", add_help=True)
     ap.add_argument("--setup", action="store_true", help="运行首次配置向导")
@@ -391,7 +496,6 @@ def main():
         run_setup()
         return
 
-    cfg = load_config()
     if args.print_config:
         shown = dict(cfg)
         key = shown.get("api_key", "")
