@@ -188,6 +188,22 @@ def _as_list(value):
     return []
 
 
+def _safe_int(value, default):
+    """宽松转 int；None/空/垃圾字符串都回退默认，不让 config 里的坏值崩掉主流程。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value, default):
+    """宽松转 float；None/空/垃圾字符串都回退默认。"""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def transcript_globs(cfg):
     """生效的会话记录 glob 列表：config.json 优先，否则内置默认。"""
     custom = _as_list(cfg.get("transcript_globs"))
@@ -332,6 +348,7 @@ def to_image_url(p):
     p = p.strip()
     if p.startswith(("http://", "https://")):
         return p
+    p = os.path.expanduser(p)  # ~/x.png 在部分 shell 里不展开，手动处理
     if not os.path.exists(p):
         raise FileNotFoundError(f"找不到图片文件: {p}")
     ext = os.path.splitext(p)[1].lower()
@@ -483,13 +500,20 @@ def find_candidates(cfg=None):
     cfg = cfg or load_config()
     found = []
     for pat in transcript_globs(cfg):
-        found.extend(glob.glob(pat, recursive=True))
+        found.extend(glob.glob(os.path.expanduser(pat), recursive=True))
     for d in paste_dirs(cfg):
+        d = os.path.expanduser(d)
         if os.path.isdir(d):
             for ext in MIME:
                 found.extend(glob.glob(os.path.join(d, "*" + ext)))
     seen, uniq = set(), []
-    for f in sorted(found, key=lambda p: os.path.getmtime(p), reverse=True):
+    # glob 之后、排序之前文件可能被删除（如 Downloads 里的临时文件），getmtime 会抛 OSError
+    def _mtime(p):
+        try:
+            return os.path.getmtime(p)
+        except OSError:
+            return 0.0
+    for f in sorted(found, key=_mtime, reverse=True):
         if f in seen:
             continue
         seen.add(f)
@@ -599,7 +623,7 @@ def main():
                 print(f"[describe-image] 错误: {e}", file=sys.stderr)
                 sys.exit(1)
     else:
-        candidates = [args.transcript] if args.transcript else find_candidates(cfg)
+        candidates = [os.path.expanduser(args.transcript)] if args.transcript else find_candidates(cfg)
         used, images = set(), []
         for cand in candidates:
             if not cand or cand in used:
@@ -631,8 +655,8 @@ def main():
     payload = {
         "model": cfg["model"],
         "messages": [{"role": "user", "content": content}],
-        "max_tokens": int(cfg.get("max_tokens", 1000)),
-        "temperature": float(cfg.get("temperature", 0.7)),
+        "max_tokens": _safe_int(cfg.get("max_tokens"), 1000),
+        "temperature": _safe_float(cfg.get("temperature"), 0.7),
     }
 
     try:
